@@ -90,7 +90,7 @@ class Patcher:
             patch_width=256, patch_height=256, overlap_width=0,
             overlap_height=0, offset_x=0, offset_y=0, on_foreground=0.5,
             on_annotation=1., start_sample=True, finished_sample=True,
-            no_patches=False):
+            no_patches=False, crop_bbox=False):
         Verify.verify_sizes(
             slide.wsi_width, slide.wsi_height, patch_width, patch_height,
             overlap_width, overlap_height)
@@ -107,10 +107,16 @@ class Patcher:
         self.o_height = int(overlap_height)
         self.offset_x = int(offset_x)
         self.offset_y = int(offset_y)
+        self.dot_bbox_width = annotation.dot_bbox_width
+        self.dot_bbox_height = annotation.dot_bbox_height
         self.x_lefttop = [i for i in range(
-            self.offset_x, self.wsi_width, patch_width - overlap_width)][:-1]
+            self.offset_x,
+            self.wsi_width,
+            patch_width - overlap_width)][:-1]
         self.y_lefttop = [i for i in range(
-            self.offset_y, self.wsi_height, patch_height - overlap_height)][:-1]
+            self.offset_y,
+            self.wsi_height,
+            patch_height - overlap_height)][:-1]
         self.iterator = list(product(self.x_lefttop, self.y_lefttop))
         self.last_x = self.slide.width - patch_width
         self.last_y = self.slide.height - patch_height
@@ -133,8 +139,9 @@ class Patcher:
         self.save_to = save_to
 
         self.result = {"result": []}
-        self.verify = Verify(save_to, self.filestem, method,
-                             start_sample, finished_sample, no_patches)
+        self.verify = Verify(
+            save_to, self.filestem, method, start_sample, finished_sample,
+            no_patches, crop_bbox)
         self.verify.verify_dirs()
 
     def __str__(self):
@@ -225,7 +232,6 @@ class Patcher:
             idx_of_bb_on_patch += self.annotation_cover_patch(coords, x, y)
 
             idx_of_bb_on_patch = list(set(idx_of_bb_on_patch))
-            assert idx_of_bb_on_patch, f"[x={x}, y={y}] This patch has annotated area."
 
             bbs_raw = coords[idx_of_bb_on_patch]
             bbs = []
@@ -418,7 +424,8 @@ class Patcher:
             mask_png_path = "{}/{}/masks/{}/{:06}_{:06}.png".format(
                 self.save_to, self.filestem, cls, x, y)
             cv2.imwrite(mask_png_path, patch_mask, (cv2.IMWRITE_PXM_BINARY, 1))
-            # contours, _ = cv2.findContours(patch_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+            # contours, _ = cv2.findContours(
+            #   patch_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
             masks = []
             mask = {"coords": mask_png_path, "class": cls}
             masks.append(mask)
@@ -453,12 +460,15 @@ class Patcher:
         self.result["no_patches"] = self.no_patches
         self.result["on_foreground"] = self.on_foreground
         self.result["on_annotation"] = self.on_annotation
+        self.result["dot_bbox_width"] = self.dot_bbox_width
+        self.result["dot_bbox_height"] = self.dot_bbox_height
         self.result["save_to"] = str(Path(self.save_to).absolute())
         self.result["classes"] = sorted(self.classes)
 
         self.remove_dup_in_results()
 
-        with open("{}/{}/results.json".format(self.save_to, self.filestem), "w") as f:
+        save_as = "{}/{}/results.json".format(self.save_to, self.filestem)
+        with open(save_as, "w") as f:
             json.dump(self.result, f, indent=4)
 
     def get_patch(self, x, y, classes=False):
@@ -482,9 +492,10 @@ class Patcher:
                     on_annotation_classes.append(cls)
         else:
             on_annotation_classes = ["foreground"]
-        patch = self.slide.slide.crop(x, y, self.p_width, self.p_height)
         for cls in on_annotation_classes:
             if not self.no_patches:
+                patch = self.slide.slide.crop(
+                    x, y, self.p_width, self.p_height)
                 patch.jpegsave(
                     "{}/{}/patches/{}/{:06}_{:06}.jpg".format(
                         self.save_to, self.filestem, cls, x, y))
@@ -500,7 +511,8 @@ class Patcher:
         for cls in classes:
             if not self.no_patches:
                 self.verify.verify_dir(
-                    "{}/{}/patches/{}".format(self.save_to, self.filestem, cls))
+                    "{}/{}/patches/{}".format(
+                        self.save_to, self.filestem, cls))
             if self.method == "segmentation":
                 self.verify.verify_dir(
                     "{}/{}/masks/{}".format(self.save_to, self.filestem, cls))
@@ -526,6 +538,25 @@ class Patcher:
 
         if self.finished_sample:
             self.get_random_sample("finished", 3)
+
+    def get_mini_patch_parallel(self, classes=False):
+        for cls in classes:
+            self.verify.verify_dir(
+                "{}/{}/mini_patches/{}".format(
+                    self.save_to, self.filestem, cls))
+
+        for patch in self.result["result"]:
+            for bb in patch["bbs"]:
+                if bb["class"] in classes:
+                    mini_patch = self.slide.slide.crop(
+                        patch["x"] + bb["x"],
+                        patch["y"] + bb["y"],
+                        bb["w"],
+                        bb["h"])
+                    mini_patch.jpegsave(
+                        "{}/{}/mini_patches/{}/{:06}_{:06}.jpg".format(
+                            self.save_to, self.filestem, bb["class"],
+                            patch["x"] + bb["x"], patch["y"] + bb["y"]))
 
     def patch_on_foreground(self, x, y):
         """Check if the patch is on the foreground area.
@@ -568,4 +599,5 @@ class Patcher:
             y = random.choice(self.y_lefttop)
             patch = self.slide.slide.crop(x, y, self.p_width, self.p_height)
             patch.pngsave(
-                "{}/{}/{}_sample/{:06}_{:06}.png".format(self.save_to, self.filestem, phase, x, y))
+                "{}/{}/{}_sample/{:06}_{:06}.png".format(
+                    self.save_to, self.filestem, phase, x, y))

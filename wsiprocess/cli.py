@@ -141,6 +141,10 @@ class Args:
         parser_det.add_argument(
             "-ra", "--ratio", default="8:1:1",
             help="Ratio of the dataset size of train/validation/test phase.")
+        parser_det.add_argument(
+            "-cb", "--crop_bbox", default=False, action="store_true",
+            help="Crop bounding boxes after patch extraction."
+        )
         self.add_annotation_args(parser_det, slide_is_sparse=True)
         self.set_common_args(parser_det)
 
@@ -180,7 +184,7 @@ def process_annotation(args, slide, rule):
                 slide, foreground="otsu")
 
     else:
-        annotation = wp.annotation(args.annotation)
+        annotation = wp.annotation(args.annotation, slidename=slide.filename)
         annotation.dot_to_bbox(args.dot_bbox_width, args.dot_bbox_height)
         if hasattr(args, "minmax") and args.minmax:
             min_, max_ = map(int, args.minmax.split("-"))
@@ -189,7 +193,7 @@ def process_annotation(args, slide, rule):
         else:
             annotation.make_masks(slide, rule, foreground=True)
 
-    if not args.extract_foreground:
+    if not args.extract_foreground and "foreground" in annotation.classes:
         annotation.classes.remove("foreground")
 
     return annotation
@@ -223,7 +227,8 @@ def main(command=None):
         offset_y=args.offset_y,
         start_sample=args.start_sample,
         finished_sample=args.finished_sample,
-        no_patches=args.no_patches)
+        no_patches=args.no_patches,
+        crop_bbox=args.crop_bbox)
     patcher.get_patch_parallel(annotation.classes)
 
     if args.method == "detection":
@@ -237,3 +242,6 @@ def main(command=None):
             converter.to_coco()
         if args.yolo_style:
             converter.to_yolo()
+
+        if args.crop_bbox:
+            patcher.get_mini_patch_parallel(annotation.classes)

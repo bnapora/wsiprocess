@@ -27,7 +27,7 @@ from .annotationparser.parser_utils import detect_type
 
 class Annotation:
 
-    def __init__(self, path, is_image=False):
+    def __init__(self, path, is_image=False, slidename=False):
         """Initialize the anntation object.
 
         Args:
@@ -37,6 +37,8 @@ class Annotation:
             is_image(bool): Whether the image is image.
         """
         self.path = path
+        self.slidename = slidename
+        self.dot_bbox_width = self.dot_bbox_height = 0
         self.is_image = is_image
         self.classes = []
         if not self.is_image:
@@ -50,7 +52,7 @@ class Annotation:
     def read_annotation(self, annotation_type=False):
         """Parse the annotation data.
 
-        WSIViewer is going to be added as a annotation type.
+        WSIDissector is going to be added as an annotation type.
         Currently, ASAP is available.
 
         Args:
@@ -60,8 +62,13 @@ class Annotation:
             annotation_type = detect_type(self.path)
         if annotation_type == "ASAP":
             from .annotationparser.ASAP_parser import AnnotationParser
+            parsed = AnnotationParser(self.path)
         elif annotation_type == "WSIDissector":
             from .annotationparser.wsidissector_parser import AnnotationParser
+            parsed = AnnotationParser(self.path)
+        elif annotation_type == "SlideRunner":
+            from .annotationparser.SlideRunner_parser import AnnotationParser
+            parsed = AnnotationParser(self.path, self.slidename)
         elif annotation_type == "Empty":
             class AnnotationParser:
                 classes = []
@@ -69,11 +76,6 @@ class Annotation:
 
                 def __init__(self, path):
                     print("Annotation File is Empty")
-        try:
-            parsed = AnnotationParser(self.path)
-        except Exception as e:
-            raise NotImplementedError(
-                "[{}] Could not parse {}".format(e, self.path))
         self.classes = parsed.classes
         self.mask_coords = parsed.mask_coords
 
@@ -96,22 +98,14 @@ class Annotation:
                 if len(coord) == 1:
                     center_x = coord[0][0]
                     center_y = coord[0][1]
-                    lefttop = [
-                        int(center_x - self.dot_bbox_width / 2),
-                        int(center_y - self.dot_bbox_height / 2)
-                    ]
-                    righttop = [
-                        int(center_x + self.dot_bbox_width / 2),
-                        int(center_y - self.dot_bbox_height / 2)
-                    ]
-                    leftbottom = [
-                        int(center_x - self.dot_bbox_width / 2),
-                        int(center_y + self.dot_bbox_height / 2)
-                    ]
-                    rightbottom = [
-                        int(center_x + self.dot_bbox_width / 2),
-                        int(center_y + self.dot_bbox_height / 2)
-                    ]
+                    left = int(center_x - self.dot_bbox_width / 2)
+                    top = int(center_y - self.dot_bbox_height / 2)
+                    right = int(center_x + self.dot_bbox_width / 2)
+                    bottom = int(center_y + self.dot_bbox_height / 2)
+                    lefttop = [left, top]
+                    righttop = [right, top]
+                    leftbottom = [left, bottom]
+                    rightbottom = [right, bottom]
                     self.mask_coords[cls][idx] = [
                         lefttop, righttop, rightbottom, leftbottom]
 
@@ -385,5 +379,6 @@ class Annotation:
             save_to (str): Parent directory to save the thumbnails.
             cls (str): Class name for each mask.
         """
-        cv2.imwrite(str(Path(save_to)/"{}.png".format(cls)),
-                    self.masks[cls], (cv2.IMWRITE_PXM_BINARY, 1))
+        cv2.imwrite(
+            str(Path(save_to)/"{}.png".format(cls)),
+            self.masks[cls], (cv2.IMWRITE_PXM_BINARY, 1))
